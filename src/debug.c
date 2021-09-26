@@ -492,6 +492,10 @@ void bugReportStart(void) {
 
 #ifdef HAVE_BACKTRACE
 static void *getMcontextEip(ucontext_t *uc) {
+#define NOT_SUPPORTED() do {\
+    UNUSED(uc);\
+    return NULL;\
+} while(0)
 #if defined(__APPLE__) && !defined(MAC_OS_X_VERSION_10_6)
     /* OSX < 10.6 */
     #if defined(__x86_64__)
@@ -503,23 +507,61 @@ static void *getMcontextEip(ucontext_t *uc) {
     #endif
 #elif defined(__APPLE__) && defined(MAC_OS_X_VERSION_10_6)
     /* OSX >= 10.6 */
-    #if defined(_STRUCT_X86_THREAD_STATE64) && !defined(__i386__)
+#if defined(_STRUCT_X86_THREAD_STATE64) && !defined(__i386__)
     return (void*) uc->uc_mcontext->__ss.__rip;
-    #else
+#elif defined(__i386__)
     return (void*) uc->uc_mcontext->__ss.__eip;
-    #endif
+#else
+    /* OSX ARM64 */
+    return (void*) arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+#endif
 #elif defined(__linux__)
     /* Linux */
-    #if defined(__i386__)
+    #if defined(__i386__) || ((defined(__X86_64__) || defined(__x86_64__)) && defined(__ILP32__))
     return (void*) uc->uc_mcontext.gregs[14]; /* Linux 32 */
     #elif defined(__X86_64__) || defined(__x86_64__)
     return (void*) uc->uc_mcontext.gregs[16]; /* Linux 64 */
     #elif defined(__ia64__) /* Linux IA64 */
     return (void*) uc->uc_mcontext.sc_ip;
+    #elif defined(__arm__) /* Linux ARM */
+    return (void*) uc->uc_mcontext.arm_pc;
+    #elif defined(__aarch64__) /* Linux AArch64 */
+    return (void*) uc->uc_mcontext.pc;
+    #else
+    NOT_SUPPORTED();
     #endif
+#elif defined(__FreeBSD__)
+    /* FreeBSD */
+    #if defined(__i386__)
+    return (void*) uc->uc_mcontext.mc_eip;
+    #elif defined(__x86_64__)
+    return (void*) uc->uc_mcontext.mc_rip;
+    #else
+    NOT_SUPPORTED();
+    #endif
+#elif defined(__OpenBSD__)
+    /* OpenBSD */
+    #if defined(__i386__)
+    return (void*) uc->sc_eip;
+    #elif defined(__x86_64__)
+    return (void*) uc->sc_rip;
+    #else
+    NOT_SUPPORTED();
+    #endif
+#elif defined(__NetBSD__)
+    #if defined(__i386__)
+    return (void*) uc->uc_mcontext.__gregs[_REG_EIP];
+    #elif defined(__x86_64__)
+    return (void*) uc->uc_mcontext.__gregs[_REG_RIP];
+    #else
+    NOT_SUPPORTED();
+    #endif
+#elif defined(__DragonFly__)
+    return (void*) uc->uc_mcontext.mc_rip;
 #else
-    return NULL;
+    NOT_SUPPORTED();
 #endif
+#undef NOT_SUPPORTED
 }
 
 void logStackContent(void **sp) {
@@ -572,7 +614,7 @@ void logRegisters(ucontext_t *uc) {
         (unsigned long) uc->uc_mcontext->__ss.__gs
     );
     logStackContent((void**)uc->uc_mcontext->__ss.__rsp);
-    #else
+    #elif defined(__i386__)
     /* OSX x86 */
     redisLog(REDIS_WARNING,
     "\n"
@@ -598,6 +640,55 @@ void logRegisters(ucontext_t *uc) {
         (unsigned long) uc->uc_mcontext->__ss.__gs
     );
     logStackContent((void**)uc->uc_mcontext->__ss.__esp);
+    #else
+    /* OSX ARM64 */
+    redisLog(REDIS_WARNING,
+              "\n"
+              "x0:%016lx x1:%016lx x2:%016lx x3:%016lx\n"
+              "x4:%016lx x5:%016lx x6:%016lx x7:%016lx\n"
+              "x8:%016lx x9:%016lx x10:%016lx x11:%016lx\n"
+              "x12:%016lx x13:%016lx x14:%016lx x15:%016lx\n"
+              "x16:%016lx x17:%016lx x18:%016lx x19:%016lx\n"
+              "x20:%016lx x21:%016lx x22:%016lx x23:%016lx\n"
+              "x24:%016lx x25:%016lx x26:%016lx x27:%016lx\n"
+              "x28:%016lx fp:%016lx lr:%016lx\n"
+              "sp:%016lx pc:%016lx cpsr:%08lx\n",
+              (unsigned long) uc->uc_mcontext->__ss.__x[0],
+              (unsigned long) uc->uc_mcontext->__ss.__x[1],
+              (unsigned long) uc->uc_mcontext->__ss.__x[2],
+              (unsigned long) uc->uc_mcontext->__ss.__x[3],
+              (unsigned long) uc->uc_mcontext->__ss.__x[4],
+              (unsigned long) uc->uc_mcontext->__ss.__x[5],
+              (unsigned long) uc->uc_mcontext->__ss.__x[6],
+              (unsigned long) uc->uc_mcontext->__ss.__x[7],
+              (unsigned long) uc->uc_mcontext->__ss.__x[8],
+              (unsigned long) uc->uc_mcontext->__ss.__x[9],
+              (unsigned long) uc->uc_mcontext->__ss.__x[10],
+              (unsigned long) uc->uc_mcontext->__ss.__x[11],
+              (unsigned long) uc->uc_mcontext->__ss.__x[12],
+              (unsigned long) uc->uc_mcontext->__ss.__x[13],
+              (unsigned long) uc->uc_mcontext->__ss.__x[14],
+              (unsigned long) uc->uc_mcontext->__ss.__x[15],
+              (unsigned long) uc->uc_mcontext->__ss.__x[16],
+              (unsigned long) uc->uc_mcontext->__ss.__x[17],
+              (unsigned long) uc->uc_mcontext->__ss.__x[18],
+              (unsigned long) uc->uc_mcontext->__ss.__x[19],
+              (unsigned long) uc->uc_mcontext->__ss.__x[20],
+              (unsigned long) uc->uc_mcontext->__ss.__x[21],
+              (unsigned long) uc->uc_mcontext->__ss.__x[22],
+              (unsigned long) uc->uc_mcontext->__ss.__x[23],
+              (unsigned long) uc->uc_mcontext->__ss.__x[24],
+              (unsigned long) uc->uc_mcontext->__ss.__x[25],
+              (unsigned long) uc->uc_mcontext->__ss.__x[26],
+              (unsigned long) uc->uc_mcontext->__ss.__x[27],
+              (unsigned long) uc->uc_mcontext->__ss.__x[28],
+              (unsigned long) arm_thread_state64_get_fp(uc->uc_mcontext->__ss),
+              (unsigned long) arm_thread_state64_get_lr(uc->uc_mcontext->__ss),
+              (unsigned long) arm_thread_state64_get_sp(uc->uc_mcontext->__ss),
+              (unsigned long) arm_thread_state64_get_pc(uc->uc_mcontext->__ss),
+              (unsigned long) uc->uc_mcontext->__ss.__cpsr
+    );
+    logStackContent((void**) arm_thread_state64_get_sp(uc->uc_mcontext->__ss));
     #endif
 /* Linux */
 #elif defined(__linux__)
